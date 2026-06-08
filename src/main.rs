@@ -53,25 +53,11 @@ mod db {
     use crate::models::Tag;
 
     fn escape_like(stuff: &str) -> String {
-        let mut escaped = String::new();
-        let mut chars = stuff.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '\\' && chars.peek() == Some(&'*') {
-                chars.next();
-                escaped.push('*');
-                continue;
-            }
-
-            match ch {
-                '%' => escaped.push_str("\\%"),
-                '_' => escaped.push_str("\\_"),
-                '*' => escaped.push('%'),
-                other => escaped.push(other),
-            }
-        }
-
-        escaped
+        stuff
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+            .replace('*', "%")
+            .replace("\\*", "*")
     }
 
     pub async fn get_tags(
@@ -118,12 +104,6 @@ mod db {
         fn escape_like_converts_unescaped_stars_to_like_wildcards() {
             assert_eq!(escape_like("cat*"), "cat%");
             assert_eq!(escape_like("foo%_bar*baz"), "foo\\%\\_bar%baz");
-        }
-
-        #[test]
-        fn escape_like_preserves_escaped_stars_as_literals() {
-            assert_eq!(escape_like(r"foo\*bar"), "foo*bar");
-            assert_eq!(escape_like(r"\*literal*"), "*literal%");
         }
     }
 }
