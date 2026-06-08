@@ -53,11 +53,25 @@ mod db {
     use crate::models::Tag;
 
     fn escape_like(stuff: &str) -> String {
-        stuff
-            .replace('%', "\\%")
-            .replace('_', "\\_")
-            .replace('*', "%")
-            .replace("\\*", "*")
+        let mut escaped = String::new();
+        let mut chars = stuff.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '\\' && chars.peek() == Some(&'*') {
+                chars.next();
+                escaped.push('*');
+                continue;
+            }
+
+            match ch {
+                '%' => escaped.push_str("\\%"),
+                '_' => escaped.push_str("\\_"),
+                '*' => escaped.push('%'),
+                other => escaped.push(other),
+            }
+        }
+
+        escaped
     }
 
     pub async fn get_tags(
@@ -88,6 +102,29 @@ mod db {
             .map(|row| Tag::from_row_ref(row).unwrap())
             .collect::<Vec<Tag>>();
         Ok(rows)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::escape_like;
+
+        #[test]
+        fn escape_like_escapes_sql_wildcards() {
+            assert_eq!(escape_like("100%"), "100\\%");
+            assert_eq!(escape_like("blue_eyes"), "blue\\_eyes");
+        }
+
+        #[test]
+        fn escape_like_converts_unescaped_stars_to_like_wildcards() {
+            assert_eq!(escape_like("cat*"), "cat%");
+            assert_eq!(escape_like("foo%_bar*baz"), "foo\\%\\_bar%baz");
+        }
+
+        #[test]
+        fn escape_like_preserves_escaped_stars_as_literals() {
+            assert_eq!(escape_like(r"foo\*bar"), "foo*bar");
+            assert_eq!(escape_like(r"\*literal*"), "*literal%");
+        }
     }
 }
 
@@ -144,6 +181,45 @@ fn validate_transform_tag(tag: &str) -> Result<String, AutocompleteError> {
         return Err(AutocompleteError::BadRequest);
     }
     Ok(tag_str)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_transform_tag, AutocompleteError};
+
+    #[test]
+    fn validate_transform_tag_normalizes_lowercases_and_strips_disallowed_chars() {
+        assert_eq!(
+            validate_transform_tag("  CaFe\u{301} % * \0  ").unwrap(),
+            "café"
+        );
+    }
+
+    #[test]
+    fn validate_transform_tag_counts_unicode_scalars_for_boundaries() {
+        assert_eq!(validate_transform_tag("猫犬鳥").unwrap(), "猫犬鳥");
+        assert!(matches!(
+            validate_transform_tag("猫犬"),
+            Err(AutocompleteError::BadRequest)
+        ));
+        assert!(matches!(
+            validate_transform_tag(&"a".repeat(101)),
+            Err(AutocompleteError::BadRequest)
+        ));
+        assert_eq!(validate_transform_tag(&"a".repeat(100)).unwrap().len(), 100);
+    }
+
+    #[test]
+    fn validate_transform_tag_rejects_inputs_that_clean_to_invalid_lengths() {
+        assert!(matches!(
+            validate_transform_tag("a b"),
+            Err(AutocompleteError::BadRequest)
+        ));
+        assert!(matches!(
+            validate_transform_tag("***%%%\0"),
+            Err(AutocompleteError::BadRequest)
+        ));
+    }
 }
 
 #[derive(Deserialize)]
